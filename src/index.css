@@ -22,3 +22,11 @@ body {
   border-radius: 12px;
   border: 2px solid rgba(255, 255, 255, 0.125);
 }
+.loading {
+  padding: 100px;
+  font-size: 36px;
+  border-radius: 20px;
+  color: white;
+  font-weight: bolder;
+  background-color: rgba(10, 101, 114, 0.8);
+}

@@ -1,8 +1,21 @@
 import { useState, useEffect, useRef } from "react";
 import "./chatbox.css";
 import EmojiPicker from "emoji-picker-react";
+import {
+  onSnapshot,
+  doc,
+  getDoc,
+  updateDoc,
+  arrayUnion,
+  collection,
+} from "firebase/firestore";
+import { db } from "../../lib/firebase";
+import { useChatStore } from "../../lib/chatStore";
+import { useUserStore } from "../../lib/userStore";
+import upload from "../../lib/upload";
 
 function Chatbox() {
+  const [chat, setChat] = useState();
   const [showPicker, setShowPicker] = useState(false);
   const [position, setPosition] = useState({ x: 850, y: 400 });
   const pickerRef = useRef(null);
@@ -11,10 +24,34 @@ function Chatbox() {
   const [inputText, setInputText] = useState("");
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const endRef = useRef(null);
+  const { chatId, user, isCurrentUserBlocked, isRecieverBlocked } =
+    useChatStore();
+  const { currentUser } = useUserStore();
+  const [img, setImg] = useState({
+    file: null,
+    url: "",
+  });
 
+  const handleImg = (e) => {
+    if (e.target.files[0]) {
+      setImg({
+        file: e.target.files[0],
+        url: URL.createObjectURL(e.target.files[0]),
+      });
+    }
+  };
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "chats", chatId), (res) => {
+      setChat(res.data());
+    });
+    return () => {
+      unsub();
+    };
+  }, [chatId]);
 
   const handleEmoji = (e) => {
     setInputText((prev) => prev + e.emoji);
@@ -40,6 +77,53 @@ function Chatbox() {
     setIsDragging(false);
   };
 
+  const handleSend = async (e) => {
+    if (inputText === "" && img.file == null) return;
+
+    let imgUrl = null;
+
+    try {
+      if (img.url) {
+        imgUrl = await upload(img.file);
+      }
+      await updateDoc(doc(db, "chats", chatId), {
+        messages: arrayUnion({
+          senderId: currentUser.id,
+          inputText,
+          createdAt: new Date(),
+          ...(imgUrl && { img: imgUrl }),
+        }),
+      });
+
+      const userIDs = [currentUser.id, user.id];
+
+      userIDs.forEach(async (id) => {
+        const userChatsRef = doc(db, "userChats", id);
+        const useChatsSnapshot = await getDoc(userChatsRef);
+        if (useChatsSnapshot.exists()) {
+          const userChatsData = useChatsSnapshot.data();
+          const chatIndex = userChatsData.chats.findIndex(
+            (c) => c.chatId === chatId
+          );
+          (userChatsData.chats[chatIndex].lastMessage = inputText),
+            (userChatsData.chats[chatIndex].isSeen =
+              id === currentUser.id ? true : false),
+            (userChatsData.chats[chatIndex].updatedAt = Date.now()),
+            await updateDoc(userChatsRef, {
+              chats: userChatsData.chats,
+            });
+        }
+      });
+    } catch (err) {
+      console.log(err);
+    }
+    setImg({
+      img: null,
+      url: "",
+    });
+    setInputText("");
+  };
+
   useEffect(() => {
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
@@ -53,9 +137,9 @@ function Chatbox() {
     <div className="chatbox">
       <div className="top">
         <div className="user">
-          <img src="./avatar.png"></img>
+          <img src={user?.avatar || "./avatar.png"}></img>
           <div className="texts">
-            <span className="UserName">Monil Shah</span>
+            <span className="UserName">{user?.username}</span>
             <p>Available.</p>
           </div>
         </div>
@@ -66,91 +150,42 @@ function Chatbox() {
         </div>
       </div>
       <div className="center">
-        <div className="message">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut
-              enim ad minim veniam, quis nostrud exercitation ullamco laboris
-              nisi ut aliquip ex ea commodo consequat.
-            </p>
-            <span>1 min ago</span>
+        {chat?.messages?.map((message, index) => (
+          <div
+            className={
+              message.senderId === currentUser.id ? "message own" : "message"
+            }
+            key={index}
+          >
+            <div className="texts">
+              {message.img && <img src={message.img}></img>}
+              {message.inputText && <p>{message.inputText}</p>}
+              {/*<span>1 min ago</span>*/}
+            </div>
           </div>
-        </div>
-        <div className="message own">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut
-              enim ad minim veniam, quis nostrud exercitation ullamco laboris
-              nisi ut aliquip ex ea commodo consequat.
-            </p>
-            <span>1 min ago</span>
-          </div>
-        </div>
-        <div className="message">
-          <div className="texts">
-            <p>
-              quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea
-              commodo consequat.
-            </p>
-            <span>1 min ago</span>
-          </div>
-        </div>
-        <div className="message own">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut
-              enim ad minim veniam, quis nostrud exercitation ullamco laboris
-              nisi ut aliquip ex ea commodo consequat.
-            </p>
-            <span>1 min ago</span>
-          </div>
-        </div>
+        ))}
 
-        <div className="message">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua.
-            </p>
-            <span>1 min ago</span>
+        {img.url && (
+          <div className="message own">
+            <div className="text">
+              <img src={img.url} alt="" />
+            </div>
           </div>
-        </div>
-        <div className="message">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut
-              enim ad minim veniam.
-            </p>
-            <span>1 min ago</span>
-          </div>
-        </div>
-        <div className="message own">
-          <div className="texts">
-            <img src="https://img.freepik.com/premium-photo/colorful-flower-with-green-leaf_1028782-202406.jpg"></img>
-            <p>Lorem ipsum dolor sit amet.</p>
-            <span>1 min ago</span>
-          </div>
-        </div>
-        <div className="message">
-          <div className="texts">
-            <p>
-              Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
-              eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut
-              enim ad minim veniam, quis nostrud exercitation ullamco laboris
-              nisi ut aliquip ex ea commodo consequat.
-            </p>
-            <span>1 min ago</span>
-          </div>
-        </div>
+        )}
+
         <div ref={endRef}></div>
       </div>
       <div className="bottom">
         <div className="icons">
-          <img src="./img.png"></img>
+          <label htmlFor="file">
+            <img src="./img.png"></img>
+          </label>
+          <input
+            type="file"
+            id="file"
+            style={{ display: "none" }}
+            onChange={handleImg}
+          />
           <img src="./camera.png"></img>
           <img src="./mic.png"></img>
         </div>
@@ -159,6 +194,7 @@ function Chatbox() {
           placeholder="Type here..."
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
+          disabled={isCurrentUserBlocked || isRecieverBlocked}
         ></input>
         <div className="emoji">
           <img
@@ -182,7 +218,13 @@ function Chatbox() {
             </div>
           )}
         </div>
-        <button className="sendButton">Send ➤</button>
+        <button
+          className="sendButton"
+          onClick={handleSend}
+          disabled={isCurrentUserBlocked || isRecieverBlocked}
+        >
+          Send ➤
+        </button>
       </div>
     </div>
   );
